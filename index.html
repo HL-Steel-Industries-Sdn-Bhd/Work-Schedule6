@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>项目排班表</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      padding: 15px;
+      background-color: #f5f7fa;
+      color: #333;
+      line-height: 1.5;
+      font-size: 20px;
+    }
+    .header-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      padding: 0 10px;
+    }
+    h2 { color: #2c3e50; font-size: 28px; margin: 0; }
+    .date {
+      font-size: 20px;
+      color: #555;
+      font-weight: bold;
+      border: 2px solid #3498db;
+      padding: 8px 14px;
+      border-radius: 6px;
+      background: #fff;
+      display: inline-block;
+      margin: 0;
+    }
+    .container {
+      max-width: 100%;
+      margin: 0 auto;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      padding: 20px;
+      overflow-x: auto;
+    }
+    .schedule-container { display: flex; gap: 20px; margin-bottom: 30px; position: relative; }
+    .projects-sidebar { width: 200px; flex-shrink: 0; }
+    .project {
+      padding: 14px 18px;
+      color: black;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-bottom: 12px;
+      font-size: 20px;
+      user-select: none;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      transition: transform 0.2s, box-shadow 0.2s;
+      text-align: center;
+      border: 2px solid #ccc;
+    }
+    .project:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
+    .project.dragging { opacity: 0.8; transform: scale(1.05); box-shadow: 0 3px 6px rgba(0,0,0,0.2); }
+    .schedule {
+      display: grid;
+      grid-template-columns: 10% repeat(16, 5.6%);
+      grid-auto-rows: minmax(60px, auto);
+      gap: 2px;
+      width: 100%;
+      position: relative;
+    }
+    .header, .time-header {
+      color: white;
+      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      border-radius: 4px;
+      padding: 12px;
+      font-size: 20px;
+    }
+    .header { background: #3498db; }
+    .time-header { background: #2c3e50; }
+    .employee-name {
+      background: none;
+      color: #333;
+      font-weight: bold;
+      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px;
+      border-radius: 6px;
+      border: 2px solid #ccc;
+      font-size: 20px;
+      min-height: 50px;
+    }
+    .cell {
+      background: #f9f9f9;
+      border: 1px solid #e0e0e0;
+      min-height: 50px;
+      position: relative;
+      border-radius: 4px;
+      transition: background-color 0.2s;
+      padding: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .cell.highlight { background-color: #e8f4fd; border: 1px dashed #3498db; }
+    .cell.selected { background-color: #d4edda; border: 2px solid #28a745; }
+    .cell.occupied { background-color: #fff8e1; }
+    .cell.break { background-color: #ddd !important; pointer-events: none; color: #555; font-weight: bold; }
+
+    /* ✅ 改动开始：任务方块允许自动换行并新增自适应字体逻辑 */
+    .assigned-project {
+      padding: 6px 10px;
+      color: black;
+      border-radius: 4px;
+      font-size: 18px;
+      user-select: none;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      cursor: pointer;
+      text-align: center;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      z-index: 1;
+      border: 1px solid #ccc;
+      transition: font-size 0.2s ease;
+      white-space: normal;        /* ✅ 允许多行 */
+      overflow-wrap: break-word;  /* ✅ 自动断行 */
+      word-break: break-word;     /* ✅ 中英文都可换行 */
+      text-overflow: unset;       /* ✅ 不显示省略号 */
+      box-sizing: border-box;
+      pointer-events: auto;
+      padding-top: 4px;
+      padding-bottom: 4px;
+      line-height: 1.05;
+    }
+    .assigned-project.merged { position: absolute; z-index: 3; box-sizing: border-box; }
+    /* ✅ 改动结束 */
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-bar">
+      <h2>项目排班表</h2>
+      <div class="date" id="todayDate">日期：</div>
+    </div>
+
+    <div class="schedule-container">
+      <div class="projects-sidebar">
+        <h3>可分配项目</h3>
+        <div id="projects"></div>
+      </div>
+      <div class="schedule" id="schedule"></div>
+    </div>
+  </div>
+
+  <script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const schedule = document.getElementById('schedule');
+    const projectsContainer = document.getElementById('projects');
+    const todayDate = document.getElementById('todayDate');
+
+    const today = new Date();
+    todayDate.innerText = '日期：' + today.toLocaleDateString('zh-CN');
+
+    const hours = ['8:30','9:30','10:30','11:30','12:00','1:00','2:00','3:00','4:00','5:00','5:30','6:00','7:00','8:00','9:00','10:00'];
+    const breakCols = [4, 10];
+
+    const emptyHeader = document.createElement('div');
+    emptyHeader.className = 'header';
+    emptyHeader.innerText = '员工/时间';
+    schedule.appendChild(emptyHeader);
+
+    hours.forEach((h) => {
+      const th = document.createElement('div');
+      th.className = 'time-header';
+      th.innerText = h;
+      schedule.appendChild(th);
+    });
+
+    const employees = [
+      { id: 'emp1', name: 'Albert' },
+      { id: 'emp2', name: 'Aung Thant' },
+      { id: 'emp3', name: 'Azim' },
+      { id: 'emp4', name: 'William' },
+      { id: 'emp5', name: 'Myo' },
+      { id: 'emp7', name: 'Wai Phyo' },
+      { id: 'emp8', name: 'Luna' },
+      { id: 'emp9', name: 'Terrence' },
+      { id: 'emp10', name: 'Yu Jun' },
+      { id: 'emp11', name: 'Bunyao' },
+      { id: 'emp12', name: 'Matthew' }
+    ];
+
+    employees.forEach((emp, rowIndex) => {
+      const empDiv = document.createElement('div');
+      empDiv.className = 'employee-name';
+      empDiv.innerText = emp.name;
+      schedule.appendChild(empDiv);
+
+      hours.forEach((hour, colIndex) => {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.dataset.row = rowIndex;
+        cell.dataset.col = colIndex;
+        if (breakCols.includes(colIndex)) {
+          cell.classList.add('break');
+          cell.innerText = '休息';
+        }
+        schedule.appendChild(cell);
+      });
+    });
+
+    const projects = [
+      { id: 'project1', name: 'Legoland-SO-004587-Item40-2units' },
+      { id: 'project2', name: 'Legoland-SO-004923-Item3-5units' },
+      { id: 'project3', name: 'Chefonic-SO-008942-Item20-50units' },
+      { id: 'project4', name: 'Chefonic-SO-007476-Item2-2units' },
+      { id: 'project5', name: 'Hero-SO-007476-Item32-3units' }
+    ];
+
+    const pastelColors = ['#FFB3BA', '#FFDFBA', '#FFFFBA', '#BAFFC9', '#BAE1FF', '#E0BBE4', '#C2F0FC'];
+    let soColorMap = {};
+    let colorIndex = 0;
+
+    projects.forEach(p => {
+      const soMatch = p.name.match(/SO-\d+/);
+      if (soMatch) {
+        const soNo = soMatch[0];
+        if (!soColorMap[soNo]) {
+          soColorMap[soNo] = pastelColors[colorIndex % pastelColors.length];
+          colorIndex++;
+        }
+      }
+    });
+
+    let selectedCell = null;
+    let dragInfo = null;
+
+    projects.forEach(project => {
+      const projectDiv = document.createElement('div');
+      projectDiv.className = 'project';
+      projectDiv.id = project.id;
+      projectDiv.innerText = project.name;
+
+      const soMatch = project.name.match(/SO-\d+/);
+      if (soMatch && soColorMap[soMatch[0]]) {
+        projectDiv.style.background = soColorMap[soMatch[0]];
+      }
+
+      projectDiv.setAttribute('draggable', 'true');
+
+      // ✅ 保留你原本的 dragstart clone 逻辑（不改）
+      projectDiv.addEventListener('dragstart', function(e) {
+        if (!selectedCell || selectedCell.classList.contains('break')) {
+          e.preventDefault();
+          return;
+        }
+        dragInfo = { project: projectDiv, startCell: selectedCell, cells: [], projectId: project.id, projectName: project.name };
+        e.dataTransfer.setData('text/plain', e.target.id);
+        e.target.classList.add('dragging');
+
+        const clone = e.target.cloneNode(true);
+        clone.style.fontSize = (parseFloat(window.getComputedStyle(e.target).fontSize) * 0.6) + "px";
+        clone.style.padding = "6px";
+        clone.style.width = (e.target.offsetWidth / 2) + "px";
+        clone.style.height = (e.target.offsetHeight / 2) + "px";
+        clone.style.opacity = "0.7";
+        clone.style.borderRadius = "4px";
+        clone.style.position = "absolute";
+        clone.style.top = "-9999px";
+        clone.style.left = "-9999px";
+        clone.style.zIndex = "9999";
+        document.body.appendChild(clone);
+
+        e.dataTransfer.setDragImage(clone, clone.offsetWidth / 2, clone.offsetHeight / 2);
+        setTimeout(() => clone.remove(), 0);
+      });
+
+      projectDiv.addEventListener('dragend', function() {
+        if (dragInfo && dragInfo.cells.length > 0) {
+          createMergedProject(dragInfo);
+          dragInfo = null;
+        }
+        this.classList.remove('dragging');
+      });
+
+      projectsContainer.appendChild(projectDiv);
+    });
+
+    const allCells = document.querySelectorAll('.cell');
+    allCells.forEach(cell => {
+      if (cell.classList.contains('break')) return;
+      cell.addEventListener('click', function() {
+        if (selectedCell) selectedCell.classList.remove('selected');
+        selectedCell = this;
+        this.classList.add('selected');
+      });
+
+      cell.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        if (dragInfo && selectedCell) {
+          highlightCells(selectedCell, this);
+        }
+      });
+
+      cell.addEventListener('dragleave', function() {
+        setTimeout(() => {
+          if (!isDraggingOverAnyCell()) clearHighlights();
+        }, 50);
+      });
+
+      cell.addEventListener('drop', function(e) {
+        e.preventDefault();
+        if (dragInfo && dragInfo.cells.length > 0) {
+          createMergedProject(dragInfo);
+          dragInfo = null;
+          if (selectedCell) {
+            selectedCell.classList.remove('selected');
+            selectedCell = null;
+          }
+        }
+        clearHighlights();
+      });
+    });
+
+    function isDraggingOverAnyCell() {
+      return Array.from(allCells).some(cell => cell.matches(':hover') || cell.querySelector(':hover'));
+    }
+
+    // fitFontSize: 自动调整 merged 元素的字体大小直到文本在给定宽/高内换行显示
+    function fitFontSize(el, rawWidth, height, spanCount) {
+      // 去掉边距与内边距的影响
+      const style = window.getComputedStyle(el);
+      const padLeft = parseFloat(style.paddingLeft) || 0;
+      const padRight = parseFloat(style.paddingRight) || 0;
+      const padTop = parseFloat(style.paddingTop) || 0;
+      const padBottom = parseFloat(style.paddingBottom) || 0;
+      const usableWidth = Math.max(8, rawWidth - padLeft - padRight - 6);
+      const usableHeight = Math.max(8, height - padTop - padBottom - 4);
+
+      // 初始最大字体大小：基于高度与跨度设定上限
+      let maxSize = Math.min(Math.floor(usableHeight * 0.75), 48 + spanCount * 4);
+      let minSize = 8; // 最小字号，避免变成 0
+
+      // 提前把字体设为可换行模式
+      el.style.fontSize = maxSize + 'px';
+      el.style.lineHeight = '1.05';
+      el.style.whiteSpace = 'normal';
+      el.style.display = 'flex';
+      el.style.alignItems = 'center';
+      el.style.justifyContent = 'center';
+
+      // 若文本太长（字符数很多），适当降低初始 maxSize
+      const textLen = (el.innerText || '').length || 1;
+      const approxPerChar = usableWidth / Math.max(1, Math.sqrt(textLen) * 6);
+      if (approxPerChar < maxSize) {
+        maxSize = Math.max(minSize, Math.floor(approxPerChar * 1.4));
+        el.style.fontSize = maxSize + 'px';
+      }
+
+      // 逐像素缩小直到既不超高也不超宽（或达到最小）
+      let fontSize = maxSize;
+      // 为了测量真实尺寸，先把元素短暂置为块级文本容器
+      el.style.width = usableWidth + 'px';
+      el.style.height = 'auto';
+
+      // 迭代减少字号，直到文本的 scrollHeight <= usableHeight
+      // 限制循环次数防止卡死
+      let safety = 0;
+      while (safety < 80) {
+        safety++;
+        el.style.fontSize = fontSize + 'px';
+        // 强制触发回流以获取 scrollHeight/scrollWidth
+        const sh = el.scrollHeight;
+        const sw = el.scrollWidth;
+        if (sh <= usableHeight && sw <= usableWidth + 4) break;
+        fontSize = fontSize - 1;
+        if (fontSize <= minSize) { fontSize = minSize; break; }
+      }
+
+      // 最终应用合适的字号（改回用百分比也可以，但 px 更稳定）
+      el.style.fontSize = fontSize + 'px';
+      // 恢复 merged 的宽高为绝对定位尺寸
+      el.style.width = rawWidth + 'px';
+      el.style.height = height + 'px';
+      return fontSize;
+    }
+
+    function createMergedProject(dragInfo) {
+      if (dragInfo.cells.length === 0) return;
+      dragInfo.cells.sort((a, b) => parseInt(a.dataset.col) - parseInt(b.dataset.col));
+      const row = dragInfo.cells[0].dataset.row;
+      const startCol = parseInt(dragInfo.cells[0].dataset.col);
+      const endCol = parseInt(dragInfo.cells[dragInfo.cells.length - 1].dataset.col);
+
+      dragInfo.cells.forEach(cell => {
+        const existing = cell.querySelector('.assigned-project');
+        if (existing) existing.remove();
+        cell.classList.remove('occupied');
+      });
+
+      document.querySelectorAll('.assigned-project.merged').forEach(el => {
+        const erow = el.dataset.row;
+        const est = parseInt(el.dataset.startCol);
+        const eet = parseInt(el.dataset.endCol);
+        if (String(erow) === String(row) && !(eet < startCol || est > endCol)) {
+          el.remove();
+        }
+      });
+
+      const merged = document.createElement('div');
+      merged.className = 'assigned-project merged';
+      merged.innerText = dragInfo.projectName;
+      merged.dataset.row = row;
+      merged.dataset.startCol = startCol;
+      merged.dataset.endCol = endCol;
+
+      const spanCount = endCol - startCol + 1;
+
+      const soMatch = dragInfo.projectName.match(/SO-\d+/);
+      if (soMatch && soColorMap[soMatch[0]]) {
+        merged.style.background = soColorMap[soMatch[0]];
+      }
+
+      const first = dragInfo.cells[0];
+      const last = dragInfo.cells[dragInfo.cells.length - 1];
+      const firstRect = first.getBoundingClientRect();
+      const lastRect = last.getBoundingClientRect();
+      const schedRect = schedule.getBoundingClientRect();
+      const rawLeft = firstRect.left - schedRect.left;
+      const rawWidth = lastRect.right - firstRect.left;
+      const top = firstRect.top - schedRect.top;
+      const height = firstRect.height;
+      merged.style.left = rawLeft + 'px';
+      merged.style.width = rawWidth + 'px';
+      merged.style.top = top + 'px';
+      merged.style.height = height + 'px';
+
+      // ---------- 改动：使用自适应字号函数来适配 1~6 格（以及更多）
+      // 先把一些样式设置到 DOM 中，这样 fitFontSize 能正确测量 scrollHeight/scrollWidth
+      merged.style.paddingLeft = '6px';
+      merged.style.paddingRight = '6px';
+      merged.style.boxSizing = 'border-box';
+      merged.style.whiteSpace = 'normal';
+      merged.style.wordBreak = 'break-word';
+      merged.style.overflow = 'hidden';
+      merged.style.display = 'flex';
+      merged.style.alignItems = 'center';
+      merged.style.justifyContent = 'center';
+
+      // 插入到文档后再测量并调整字体
+      schedule.appendChild(merged);
+
+      // 调整字号直到文字完整显示在合并区域内
+      // 如果 spanCount === 1 我们给一个更小的初始上限，以免太大溢出（原先你要 70%）
+      try {
+        fitFontSize(merged, rawWidth, height, spanCount);
+      } catch (e) {
+        // 万一 fitFontSize 出错，退回到稳妥字号
+        merged.style.fontSize = (spanCount === 1) ? '70%' : Math.max(12, 16 + spanCount * 2) + 'px';
+      }
+      // ---------- 改动结束
+
+      merged.addEventListener('click', e => {
+        e.stopPropagation();
+        removeMergedProject(merged);
+      });
+
+      dragInfo.cells.forEach(c => c.classList.add('occupied'));
+    }
+
+    function removeMergedProject(el) {
+      if (!el) return;
+      const row = el.dataset.row;
+      const start = parseInt(el.dataset.startCol);
+      const end = parseInt(el.dataset.endCol);
+      for (let c = start; c <= end; c++) {
+        const cell = document.querySelector(`.cell[data-row="${row}"][data-col="${c}"]`);
+        if (cell) cell.classList.remove('occupied');
+      }
+      el.remove();
+    }
+
+    function highlightCells(startCell, endCell) {
+      clearHighlights();
+      if (!startCell || !endCell) return;
+      const row = startCell.dataset.row;
+      if (row !== endCell.dataset.row) return;
+      let start = parseInt(startCell.dataset.col);
+      let end = parseInt(endCell.dataset.col);
+      if (end < start) [start, end] = [end, start];
+      for (let c = start; c <= end; c++) {
+        const cell = document.querySelector(`.cell[data-row="${row}"][data-col="${c}"]`);
+        if (cell && !cell.classList.contains('break')) cell.classList.add('highlight');
+      }
+      dragInfo.cells = Array.from(document.querySelectorAll('.cell.highlight'));
+    }
+
+    function clearHighlights() {
+      document.querySelectorAll('.cell.highlight').forEach(cell => cell.classList.remove('highlight'));
+    }
+  });
+  </script>
+</body>
+</html>
