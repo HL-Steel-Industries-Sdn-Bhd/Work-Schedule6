@@ -336,11 +336,6 @@
 
     // fitFontSize: 自动调整 merged 元素的字体大小直到文本在给定宽/高内换行显示
     function fitFontSize(el, rawWidth, height, spanCount) {
-      // 优化：
-      // - span==1 保持原样（之前你说 accept）
-      // - span==2 在计算出的最大可用字号基础上尝试放大 30%（然后回退到不溢出的最大值）
-      // - span>=3 恢复到你原先更简单的逻辑（基于 span 直接算一个合适起始值并向下调整）
-
       const style = window.getComputedStyle(el);
       const padLeft = parseFloat(style.paddingLeft) || 0;
       const padRight = parseFloat(style.paddingRight) || 0;
@@ -349,19 +344,21 @@
       const usableWidth = Math.max(8, rawWidth - padLeft - padRight - 6);
       const usableHeight = Math.max(8, height - padTop - padBottom - 4);
 
-      const minSize = 12; // 保持你要求避免蚂蚁字
-
-      // 基础样式，确保可测量
-      el.style.whiteSpace = 'normal';
-      el.style.wordBreak = 'break-word';
-      el.style.boxSizing = 'border-box';
-      el.style.lineHeight = '1.05';
-      el.style.width = usableWidth + 'px';
-      el.style.height = 'auto';
+      // ✅ 根据你的要求设置不同格数的最小字体
+      let minSize;
+      if (spanCount === 1) {
+        minSize = 12; // 1格最小12px
+      } else if (spanCount === 2) {
+        minSize = 14; // 2格最小14px
+      } else if (spanCount === 3) {
+        minSize = 16; // 3格最小16px
+      } else {
+        minSize = 18; // 4格及以上最小18px
+      }
 
       // 如果 spanCount >= 3，恢复为较简单的原始逻辑：从一个合理的中等字号开始，向下找
       if (spanCount >= 3) {
-        let fontSize = Math.max(12, 16 + spanCount * 2);
+        let fontSize = Math.max(minSize, 16 + spanCount * 2);
         let safety = 0;
         while (fontSize >= minSize && safety < 120) {
           safety++;
@@ -381,8 +378,7 @@
         return fontSize;
       }
 
-      // spanCount === 1 或 2 使用更精细的搜索（span==1 保持现状，span==2 在结果上尝试放大 30%）
-      // 初始从高度上限开始尝试（尽量放大）
+      // spanCount === 1 或 2 使用更精细的搜索
       let startSize = Math.min(Math.floor(usableHeight), 72 + spanCount * 6);
       if (startSize < minSize) startSize = minSize;
       let fontSize = startSize;
@@ -397,17 +393,13 @@
       }
       if (fontSize < minSize) fontSize = minSize;
 
-      // 如果是 span==2，尝试放大 30%，但确保不溢出：如果放大后溢出，再逐步回退
+      // 如果是 span==2，尝试放大 30%，但确保不溢出
       if (spanCount === 2) {
         let boosted = Math.ceil(fontSize * 1.3);
-        // cap boosted to some reasonable max (避免过度膨胀)
         boosted = Math.min(boosted, Math.max(48, Math.floor(usableHeight)));
         el.style.fontSize = boosted + 'px';
         let sh = el.scrollHeight;
         let sw = el.scrollWidth;
-        let computedLineHeight = parseFloat(window.getComputedStyle(el).lineHeight) || (boosted * 1.05);
-        let lineCount = Math.max(1, Math.round(sh / computedLineHeight));
-        // 准则：允许最多 2 行（你之前要求），但我们已经在布局上用放大策略，所以这里以不溢出为准
         let safety2 = 0;
         while ((sh > usableHeight + 1 || sw > usableWidth + 4) && boosted > minSize && safety2 < 120) {
           safety2++;
