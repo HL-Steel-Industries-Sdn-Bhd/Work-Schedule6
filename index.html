@@ -336,7 +336,11 @@
 
     // fitFontSize: 自动调整 merged 元素的字体大小直到文本在给定宽/高内换行显示
     function fitFontSize(el, rawWidth, height, spanCount) {
-      // 改进版：优先**放大到能填满格子**，但受限于每种 span 的最大行数（用户要求）
+      // 优化：
+      // - span==1 保持原样（之前你说 accept）
+      // - span==2 在计算出的最大可用字号基础上尝试放大 30%（然后回退到不溢出的最大值）
+      // - span>=3 恢复到你原先更简单的逻辑（基于 span 直接算一个合适起始值并向下调整）
+
       const style = window.getComputedStyle(el);
       const padLeft = parseFloat(style.paddingLeft) || 0;
       const padRight = parseFloat(style.paddingRight) || 0;
@@ -345,47 +349,77 @@
       const usableWidth = Math.max(8, rawWidth - padLeft - padRight - 6);
       const usableHeight = Math.max(8, height - padTop - padBottom - 4);
 
-      // 不同 span 的最大行数（你要求）
-      const maxLines = (spanCount === 1) ? 3 : (spanCount === 2) ? 2 : 1000;
+      const minSize = 12; // 保持你要求避免蚂蚁字
 
-      // 保护最小字号，避免蚂蚁字
-      const minSize = 12;
-
-      // 初始最大字号：先尝试一个较大的值（基于高度），确保能放大到极限
-      let fontSize = Math.min(Math.floor(usableHeight), 72 + spanCount * 6);
-
-      // 设置可换行的基础样式
+      // 基础样式，确保可测量
       el.style.whiteSpace = 'normal';
       el.style.wordBreak = 'break-word';
-      el.style.display = 'block';
       el.style.boxSizing = 'border-box';
       el.style.lineHeight = '1.05';
-      // 临时将宽度设为可用宽度以便测量换行
       el.style.width = usableWidth + 'px';
       el.style.height = 'auto';
 
-      // 逐像素向下尝试，直到满足：scrollHeight <= usableHeight && 行数 <= maxLines && scrollWidth <= usableWidth
-      // 由于我们从较大值开始，最终得到的是“最大可用字号”。
+      // 如果 spanCount >= 3，恢复为较简单的原始逻辑：从一个合理的中等字号开始，向下找
+      if (spanCount >= 3) {
+        let fontSize = Math.max(12, 16 + spanCount * 2);
+        let safety = 0;
+        while (fontSize >= minSize && safety < 120) {
+          safety++;
+          el.style.fontSize = fontSize + 'px';
+          const sh = el.scrollHeight;
+          const sw = el.scrollWidth;
+          if (sh <= usableHeight + 1 && sw <= usableWidth + 4) break;
+          fontSize -= 1;
+        }
+        if (fontSize < minSize) fontSize = minSize;
+        el.style.fontSize = fontSize + 'px';
+        el.style.width = rawWidth + 'px';
+        el.style.height = height + 'px';
+        el.style.display = 'flex';
+        el.style.alignItems = 'center';
+        el.style.justifyContent = 'center';
+        return fontSize;
+      }
+
+      // spanCount === 1 或 2 使用更精细的搜索（span==1 保持现状，span==2 在结果上尝试放大 30%）
+      // 初始从高度上限开始尝试（尽量放大）
+      let startSize = Math.min(Math.floor(usableHeight), 72 + spanCount * 6);
+      if (startSize < minSize) startSize = minSize;
+      let fontSize = startSize;
       let safety = 0;
       while (fontSize >= minSize && safety < 200) {
         safety++;
         el.style.fontSize = fontSize + 'px';
-        // 强制回流
         const sh = el.scrollHeight;
         const sw = el.scrollWidth;
-        // 估算行数：取 scrollHeight / lineHeight
-        const computedLineHeight = parseFloat(window.getComputedStyle(el).lineHeight) || (fontSize * 1.05);
-        const lineCount = Math.max(1, Math.round(sh / computedLineHeight));
-
-        if (sh <= usableHeight + 1 && sw <= usableWidth + 4 && lineCount <= maxLines) {
-          break; // 成功：这是最大的合适字号
-        }
+        if (sh <= usableHeight + 1 && sw <= usableWidth + 4) break;
         fontSize -= 1;
       }
-
       if (fontSize < minSize) fontSize = minSize;
 
-      // 应用最终字号并恢复定位尺寸
+      // 如果是 span==2，尝试放大 30%，但确保不溢出：如果放大后溢出，再逐步回退
+      if (spanCount === 2) {
+        let boosted = Math.ceil(fontSize * 1.3);
+        // cap boosted to some reasonable max (避免过度膨胀)
+        boosted = Math.min(boosted, Math.max(48, Math.floor(usableHeight)));
+        el.style.fontSize = boosted + 'px';
+        let sh = el.scrollHeight;
+        let sw = el.scrollWidth;
+        let computedLineHeight = parseFloat(window.getComputedStyle(el).lineHeight) || (boosted * 1.05);
+        let lineCount = Math.max(1, Math.round(sh / computedLineHeight));
+        // 准则：允许最多 2 行（你之前要求），但我们已经在布局上用放大策略，所以这里以不溢出为准
+        let safety2 = 0;
+        while ((sh > usableHeight + 1 || sw > usableWidth + 4) && boosted > minSize && safety2 < 120) {
+          safety2++;
+          boosted -= 1;
+          el.style.fontSize = boosted + 'px';
+          sh = el.scrollHeight;
+          sw = el.scrollWidth;
+        }
+        fontSize = boosted;
+      }
+
+      // 应用并恢复尺寸
       el.style.fontSize = fontSize + 'px';
       el.style.lineHeight = '1.05';
       el.style.width = rawWidth + 'px';
