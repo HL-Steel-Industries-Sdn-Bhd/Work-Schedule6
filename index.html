@@ -344,16 +344,18 @@
       const usableWidth = Math.max(8, rawWidth - padLeft - padRight - 6);
       const usableHeight = Math.max(8, height - padTop - padBottom - 4);
 
-      // ✅ 根据你的要求设置不同格数的最小字体
+      // ✅ 根据你的新要求设置不同格数的最小字体
       let minSize;
       if (spanCount === 1) {
         minSize = 12; // 1格最小12px
       } else if (spanCount === 2) {
-        minSize = 14; // 2格最小14px
+        minSize = 16; // 2格最小16px
       } else if (spanCount === 3) {
-        minSize = 16; // 3格最小16px
+        minSize = 18; // 3格最小18px
+      } else if (spanCount === 4) {
+        minSize = 22; // 4格最小22px
       } else {
-        minSize = 18; // 4格及以上最小18px
+        minSize = 26; // 6格及以上最小26px
       }
 
       // 如果 spanCount >= 3，恢复为较简单的原始逻辑：从一个合理的中等字号开始，向下找
@@ -488,12 +490,11 @@
       schedule.appendChild(merged);
 
       // 调整字号直到文字完整显示在合并区域内
-      // 如果 spanCount === 1 我们给一个更小的初始上限，以免太大溢出（原先你要 70%）
       try {
         fitFontSize(merged, rawWidth, height, spanCount);
       } catch (e) {
         // 万一 fitFontSize 出错，退回到稳妥字号
-        merged.style.fontSize = (spanCount === 1) ? '70%' : Math.max(12, 16 + spanCount * 2) + 'px';
+        merged.style.fontSize = minSize + 'px';
       }
       // ---------- 改动结束
 
